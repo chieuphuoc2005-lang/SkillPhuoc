@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Ô Ăn Quan - Mandarin Square Master</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: { wood: { light: '#deb887', DEFAULT: '#8b5a2b', dark: '#5d3a1a', red: '#8a4b38' }, parchment: '#fdf6e3', jade: '#27ae60' },
+            fontFamily: { serif: ['"Playfair Display"', 'serif'], sans: ['Roboto', 'sans-serif'] },
+            backgroundImage: { 'wood-pattern': "url('https://www.transparenttextures.com/patterns/wood-pattern.png')" }
+          }
+        }
+      }
+    </script>
+    <style>
+      body { background: radial-gradient(circle, #2e2e2e 0%, #1a1a1a 100%); margin: 0; overflow-x: hidden; touch-action: manipulation; }
+      ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-track { background: #1a1a1a; } ::-webkit-scrollbar-thumb { background: #8b5a2b; border-radius: 4px; }
+      .animate-spin-slow { animation: spin 3s linear infinite; }
+      @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      .slot-disabled { cursor: default; opacity: 0.8; }
+      .slot-active { cursor: pointer; }
+      .shield-pulse { animation: shieldPulse 2s infinite; }
+      @keyframes shieldPulse { 0% { opacity: 0.6; transform: scale(1); } 50% { opacity: 1; transform: scale(1.1); } 100% { opacity: 0.6; transform: scale(1); } }
+      
+      .stone-drop { animation: dropIn 0.3s ease-out; }
+      @keyframes dropIn { from { transform: translateY(-20px) scale(1.5); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+      
+      .glass-panel { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.2); }
+    </style>
+    <script type="importmap">{ "imports": { "react": "https://esm.sh/react@18.2.0", "react-dom/client": "https://esm.sh/react-dom@18.2.0/client", "lucide-react": "https://esm.sh/lucide-react@0.344.0", "peerjs": "https://esm.sh/peerjs@1.5.2?bundle-deps" } }</script>
+  <link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="text/babel" data-type="module">
+      import React, { useState, useEffect, useCallback, useRef } from 'react';
+      import { createRoot } from 'react-dom/client';
+      import { Peer } from 'peerjs';
+      import { ArrowLeft, ArrowRight, Trophy, Users, Wifi, RotateCcw, Monitor, Hand, User, Upload, Swords, LogOut, Copy, AlertTriangle, Loader2, Clock, Shield, ShieldAlert, XCircle, Check, Zap, Coins } from 'lucide-react';
+
+      const Player = { P1: 'Player 1', P2: 'Player 2', AI: 'Master AI' };
+      const GameMode = { PVP_LOCAL: 'PVP_LOCAL', PVP_ONLINE: 'PVP_ONLINE', PVE_EASY: 'PVE_EASY', PVE_HARD: 'PVE_HARD' };
+      const GamePhase = { MENU: 'MENU', PROFILE_SETUP: 'PROFILE_SETUP', LOBBY: 'LOBBY', CONNECTION: 'CONNECTION', RPS_GAME: 'RPS_GAME', PLAYING: 'PLAYING' };
+      const RPSMove = { ROCK: 'ROCK', PAPER: 'PAPER', SCISSORS: 'SCISSORS' };
+      const INITIAL_BOARD = [10, 5, 5, 5, 5, 5, 10, 5, 5, 5, 5, 5];
+      const P1_SLOTS = [1, 2, 3, 4, 5];
+      const P2_SLOTS = [7, 8, 9, 10, 11];
+      const MANDARIN_SLOTS = [0, 6];
+      const QUAN_NON_THRESHOLD = 5;
+
+      const cloneBoard = (board) => [...board];
+      const getNextIndex = (index, dir) => { let next = index + dir; return next < 0 ? 11 : (next > 11 ? 0 : next); };
+      const checkGameOver = (board) => board[0] === 0 && board[6] === 0;
+      
+      const collectRemainingStones = (board) => {
+          let p1Bonus = 0, p2Bonus = 0;
+          P1_SLOTS.forEach(i => { p1Bonus += board[i]; board[i] = 0; });
+          P2_SLOTS.forEach(i => { p2Bonus += board[i]; board[i] = 0; });
+          return { board, p1Bonus, p2Bonus };
+      };
+
+      // AI Logic: Calculate the potential score of a move without executing animations
+      const simulateMoveScore = (currentBoard, startIndex, direction) => {
+          let tempBoard = [...currentBoard];
+          let score = 0;
+          let currentIdx = startIndex;
+          let hand = tempBoard[currentIdx];
+          tempBoard[currentIdx] = 0;
+
+          // Simple simulation loop (does not account for complex multi-turn captures perfectly but good for Greedy)
+          // Just run the sowing logic instantly
+          while (true) {
+              // Sow
+              while (hand > 0) {
+                  currentIdx = getNextIndex(currentIdx, direction);
+                  tempBoard[currentIdx]++;
+                  hand--;
+              }
+              
+              // Eval
+              if (MANDARIN_SLOTS.includes(currentIdx)) break; // End at Mandarin
+              
+              if (tempBoard[currentIdx] > 1) {
+                  hand = tempBoard[currentIdx];
+                  tempBoard[currentIdx] = 0;
+                  continue;
+              } else {
+                  // Empty slot found, check capture
+                  let nextIdx = getNextIndex(currentIdx, direction);
+                  if (tempBoard[nextIdx] > 0) {
+                      // Capture loop logic for simulation
+                      let loopIdx = nextIdx;
+                      let loopGap = currentIdx;
+                      
+                      while(true) {
+                         // Check Quan Non constraint for AI
+                         if (MANDARIN_SLOTS.includes(loopIdx) && tempBoard[loopIdx] < QUAN_NON_THRESHOLD) break;
+
+                         score += tempBoard[loopIdx];
+                         tempBoard[loopIdx] = 0;
+                         
+                         // Check for next capture
+                         loopGap = getNextIndex(loopIdx, direction);
+                         if (tempBoard[loopGap] > 0) break; // Next is not empty, stop
+                         loopIdx = getNextIndex(loopGap, direction);
+                         if (tempBoard[loopIdx] === 0) break; // Nothing to eat
+                      }
+                  }
+                  break;
+              }
+          }
+          return score;
+      };
+
+      const getBestAIMove = (board, difficulty) => {
+          const slots = P2_SLOTS;
+          let bestScore = -1000;
+          let bestMove = { idx: 7, dir: 1 }; // Default
+          
+          // Identify moves
+          let possibleMoves = [];
+          
+          slots.forEach(idx => {
+              if (board[idx] > 0) {
+                  [1, -1].forEach(dir => {
+                      const score = simulateMoveScore(board, idx, dir);
+                      possibleMoves.push({ idx, dir, score });
+                  });
+              }
+          });
+          
+          if (possibleMoves.length === 0) return null; // No moves possible (handled by empty side rule)
+
+          if (difficulty === GameMode.PVE_EASY) {
+              // 30% chance to pick random valid move, else greedy
+              if (Math.random() < 0.3) return possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
+          }
+          
+          // Greedy: Pick highest score
+          // Add small randomization for equal scores to make AI less predictable
+          possibleMoves.sort((a, b) => b.score - a.score || Math.random() - 0.5);
+          return possibleMoves[0];
+      };
+
+      const generateShortId = () => {
+          const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; 
+          let result = '';
+          for (let i = 0; i < 6; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+          return result;
+      };
+
+      const StoneCluster = ({ count, isMandarin, color }) => {
+        const visibleCount = Math.min(count, isMandarin ? 60 : 30);
+        return (
+          <div className="relative w-full h-full flex items-center justify-center pointer-events-none">
+            {Array.from({ length: visibleCount }).map((_, i) => {
+              const scale = isMandarin ? 7 : 5; const angle = i * 137.5; const dist = Math.sqrt(i) * scale;
+              const x = Math.min(dist, isMandarin?60:25) * Math.cos(angle * Math.PI/180);
+              const y = Math.min(dist, isMandarin?60:20) * Math.sin(angle * Math.PI/180);
+              return <div key={i} className={`stone-drop absolute rounded-full shadow-[1px_2px_3px_rgba(0,0,0,0.4)] border border-black/10 ${isMandarin ? 'w-5 h-5 bg-gradient-to-br from-amber-300 via-amber-500 to-amber-700' : 'w-4 h-4 bg-gradient-to-br from-stone-200 via-stone-300 to-stone-400'}`} style={{ transform: `translate(${x}px, ${y}px)`, animationDelay: `${i*0.01}s` }} />
+            })}
+            {count > visibleCount && <div className="absolute z-50 bg-black/80 text-white text-xs px-2 py-1 rounded-full font-bold shadow-lg border border-white/20">+{count - visibleCount}</div>}
+          </div>
+        );
+      };
+
+      const GameBtn = ({ onClick, children, color = 'wood', className = '', disabled = false, size = 'md' }) => {
+        const colors = { wood: 'bg-[#8b5a2b] border-[#5d3a1a] hover:bg-[#a06b35]', blue: 'bg-blue-600 border-blue-800 hover:bg-blue-500', red: 'bg-red-600 border-red-800 hover:bg-red-500', gray: 'bg-gray-600 border-gray-800 hover:bg-gray-500' };
+        const sizes = { sm: 'py-1 px-3 text-sm border-b-[3px]', md: 'py-3 px-6 text-base border-b-4', lg: 'py-4 px-8 text-xl font-bold border-b-[6px]' };
+        return <button onClick={onClick} disabled={disabled} className={`${colors[color]} ${sizes[size]} text-white font-bold rounded-xl transition-all active:border-b-0 active:translate-y-1 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg ${className}`}>{children}</button>;
+      };
+
+      const Avatar = ({ src, size = 'md' }) => (
+        <div className={`${size === 'sm' ? 'w-8 h-8' : size === 'md' ? 'w-16 h-16' : 'w-24 h-24'} rounded-full border-4 border-wood-light bg-stone-800 overflow-hidden relative shadow-md`}>
+          {src ? <img src={src} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-stone-700 text-stone-400"><User /></div>}
+        </div>
+      );
+
+      function App() {
+        const [phase, setPhase] = useState(GamePhase.MENU);
+        const [mode, setMode] = useState(null);
+        const [myProfile, setMyProfile] = useState({ name: 'Me', avatar: null });
+        const [p1Profile, setP1Profile] = useState({ name: 'Player 1', avatar: null });
+        const [p2Profile, setP2Profile] = useState({ name: 'Player 2', avatar: null }); 
+        
+        const [isHost, setIsHost] = useState(false);
+        const [board, setBoard] = useState(INITIAL_BOARD);
+        const [scores, setScores] = useState({ [Player.P1]: 0, [Player.P2]: 0, [Player.AI]: 0 });
+        const [turn, setTurn] = useState(Player.P1);
+        const [isAnimating, setIsAnimating] = useState(false);
+        const [winner, setWinner] = useState(null);
+        const [selectedSlot, setSelectedSlot] = useState(null);
+        const [activeSowingSlot, setActiveSowingSlot] = useState(null);
+        const [scale, setScale] = useState(1);
+        const [timeLimit, setTimeLimit] = useState(0); 
+        const [timeLeft, setTimeLeft] = useState(null); 
+        const [peerId, setPeerId] = useState('');
+        const [conn, setConn] = useState(null);
+        const [targetPeerId, setTargetPeerId] = useState('');
+        const [isConnecting, setIsConnecting] = useState(false);
+        const [rpsP1Move, setRpsP1Move] = useState(null);
+        const [rpsP2Move, setRpsP2Move] = useState(null);
+        const [rpsWinner, setRpsWinner] = useState(null);
+        const [showRpsResult, setShowRpsResult] = useState(false);
+        const [showExitConfirm, setShowExitConfirm] = useState(false);
+        const [showDisconnectModal, setShowDisconnectModal] = useState(false);
+        const [resetRequestStatus, setResetRequestStatus] = useState('NONE');
+        const [quanNonAlert, setQuanNonAlert] = useState(false);
+        const [scatterAlert, setScatterAlert] = useState(false); // Alert for "Dải dân"
+        const [copied, setCopied] = useState(false);
+
+        const peerRef = useRef(null);
+        const boardContainerRef = useRef(null);
+        const boardRef = useRef(board);
+        const scoresRef = useRef(scores);
+        const turnRef = useRef(turn);
+        const isHostRef = useRef(isHost); 
+        const modeRef = useRef(mode);
+        const timeLimitRef = useRef(timeLimit);
+        const timerRef = useRef(null);
+
+        const isRotated = mode === GameMode.PVP_ONLINE && !isHost;
+
+        useEffect(() => { boardRef.current = board; }, [board]);
+        useEffect(() => { scoresRef.current = scores; }, [scores]);
+        useEffect(() => { isHostRef.current = isHost; }, [isHost]);
+        useEffect(() => { modeRef.current = mode; }, [mode]);
+        useEffect(() => { timeLimitRef.current = timeLimit; }, [timeLimit]);
+        const setTurnSafe = (newTurn) => { setTurn(newTurn); turnRef.current = newTurn; };
+
+        useEffect(() => {
+            const handleResize = () => { if (boardContainerRef.current) setScale(Math.min(window.innerWidth - 32, 1100) / 1100); };
+            setTimeout(handleResize, 100); window.addEventListener('resize', handleResize);
+            return () => window.removeEventListener('resize', handleResize);
+        }, [phase]);
+
+        useEffect(() => {
+          if (phase === GamePhase.PLAYING && timeLimit > 0 && !winner) {
+              timerRef.current = setInterval(() => {
+                  setTimeLeft(p => {
+                      if (p === null) return p;
+                      const nt = Math.max(0, p - 1);
+                      if (isHost && conn && nt % 5 === 0) conn.send({ type: 'TIME_SYNC', payload: nt });
+                      return nt;
+                  });
+              }, 1000);
+          } else clearInterval(timerRef.current);
+          return () => clearInterval(timerRef.current);
+        }, [phase, timeLimit, winner, isHost, conn]);
+
+        useEffect(() => {
+           if (phase === GamePhase.PLAYING && timeLimit > 0 && timeLeft === 0 && !winner) {
+                const w = turnRef.current === Player.P1 ? (mode?.includes('PVE') ? Player.AI : Player.P2) : Player.P1;
+                setWinner(w); if (mode === GameMode.PVP_ONLINE && conn) conn.send({ type: 'GAME_OVER_TIMEOUT', payload: w });
+           }
+        }, [timeLeft, phase]);
+
+        // Check for "Scatter" (Dải dân) condition immediately when turn changes or after move
+        const checkAndHandleScatter = useCallback(async (currentBoard, currentScores, player) => {
+            const slots = player === Player.P1 ? P1_SLOTS : P2_SLOTS;
+            const hasStones = slots.some(idx => currentBoard[idx] > 0);
+            
+            if (!hasStones) {
+                // Check if Game Over (Mandarins empty) - this takes precedence
+                if (checkGameOver(currentBoard)) return { gameOver: true, board: currentBoard, scores: currentScores };
+
+                // Player needs to scatter
+                const scorer = player === Player.P2 ? (modeRef.current?.includes('PVE') ? Player.AI : Player.P2) : Player.P1;
+                
+                if (currentScores[scorer] < 5) {
+                    // Not enough points to scatter -> LOSE
+                    return { gameOver: true, loser: scorer, board: currentBoard, scores: currentScores };
+                }
+
+                // Scatter logic
+                setScatterAlert(true);
+                await new Promise(r => setTimeout(r, 1500));
+                
+                const newBoard = [...currentBoard];
+                const newScores = {...currentScores};
+                
+                newScores[scorer] -= 5;
+                slots.forEach(idx => newBoard[idx] = 1);
+                
+                setBoard([...newBoard]);
+                setScores(newScores);
+                setScatterAlert(false);
+                
+                return { gameOver: false, board: newBoard, scores: newScores, scattered: true };
+            }
+            return { gameOver: false, board: currentBoard, scores: currentScores };
+        }, []);
+
+        const executeMove = useCallback(async (startIndex, direction, isRemote = false) => {
+          if (isAnimating || phase !== GamePhase.PLAYING) return;
+          const mover = P1_SLOTS.includes(startIndex) ? Player.P1 : (P2_SLOTS.includes(startIndex) ? Player.P2 : null);
+          
+          if (mode === GameMode.PVP_ONLINE && !isRemote) {
+              const myId = isHost ? Player.P1 : Player.P2;
+              if (mover !== myId) return; 
+              if (turnRef.current !== myId) return; 
+              if (conn) conn.send({ type: 'GAME_MOVE', payload: { slotIndex: startIndex, direction } });
+          }
+          
+          setTurnSafe(mover); setIsAnimating(true); setSelectedSlot(null);
+          
+          try {
+            let curBoard = [...boardRef.current];
+            let curScores = { ...scoresRef.current };
+            
+            let currentIdx = startIndex;
+            let hand = curBoard[currentIdx];
+            curBoard[currentIdx] = 0;
+            setBoard([...curBoard]); 
+            setActiveSowingSlot(currentIdx);
+            await new Promise(r => setTimeout(r, 400));
+
+            while (true) {
+               // 1. Sowing Phase
+               while (hand > 0) {
+                  currentIdx = getNextIndex(currentIdx, direction);
+                  curBoard[currentIdx]++;
+                  hand--;
+                  setBoard([...curBoard]); 
+                  setActiveSowingSlot(currentIdx);
+                  await new Promise(r => setTimeout(r, 300));
+               }
+
+               // 2. Evaluation Phase
+               if (MANDARIN_SLOTS.includes(currentIdx)) {
+                   setActiveSowingSlot(null);
+                   break; // End turn if land in Mandarin
+               }
+               
+               if (curBoard[currentIdx] > 1) {
+                   // Continue sowing
+                   hand = curBoard[currentIdx];
+                   curBoard[currentIdx] = 0;
+                   setBoard([...curBoard]);
+                   setActiveSowingSlot(currentIdx);
+                   await new Promise(r => setTimeout(r, 400));
+                   continue; 
+               } else {
+                   // Landed on empty square -> Check Capture
+                   const nextIdx = getNextIndex(currentIdx, direction);
+                   if (curBoard[nextIdx] > 0) {
+                       // Capture Logic (Iterative for chain capturing)
+                       let loopGap = currentIdx; // The empty slot creating the capture
+                       let loopTarget = nextIdx; // The slot being eaten
+
+                       while (true) {
+                          // Check Quan Non rule
+                          if (MANDARIN_SLOTS.includes(loopTarget) && curBoard[loopTarget] < QUAN_NON_THRESHOLD) {
+                               setQuanNonAlert(true); 
+                               await new Promise(r => setTimeout(r, 1500));
+                               setQuanNonAlert(false);
+                               break; // Stop capturing chain
+                          }
+
+                          const eaten = curBoard[loopTarget];
+                          curBoard[loopTarget] = 0;
+                          
+                          // Visual feedback for eating
+                          setActiveSowingSlot(loopTarget);
+                          setBoard([...curBoard]);
+                          await new Promise(r => setTimeout(r, 500));
+                          
+                          const scorer = mover === Player.P2 ? (mode?.includes('PVE') ? Player.AI : Player.P2) : Player.P1;
+                          curScores[scorer] = (curScores[scorer] || 0) + eaten;
+                          setScores({...curScores});
+
+                          // Prepare for next link in chain
+                          // Pattern: [Gap] [Target] [NextGap] [NextTarget]
+                          // Current Gap was loopGap. Target was loopTarget.
+                          // Next Gap is next of Target.
+                          const nextGap = getNextIndex(loopTarget, direction);
+                          if (curBoard[nextGap] > 0) break; // Next gap is NOT empty -> Stop chain
+                          
+                          const nextTarget = getNextIndex(nextGap, direction);
+                          if (curBoard[nextTarget] === 0) break; // Next target is empty -> Stop chain
+
+                          // Continue chain
+                          loopGap = nextGap;
+                          loopTarget = nextTarget;
+                          // Brief pause between double captures
+                          await new Promise(r => setTimeout(r, 300));
+                       }
+                       setActiveSowingSlot(null);
+                       break; // End turn after capture sequence
+                   } else {
+                       // Landed on empty, next is empty -> Stop
+                       setActiveSowingSlot(null);
+                       break;
+                   }
+               }
+            }
+
+            // End of Move Processing
+            
+            // Check Game Over (Mandarins Empty)
+            if (checkGameOver(curBoard)) {
+               const res = collectRemainingStones(curBoard);
+               curScores[Player.P1] += res.p1Bonus; curScores[mode?.includes('PVE') ? Player.AI : Player.P2] += res.p2Bonus;
+               setBoard([...res.board]); setScores(curScores);
+               const p1 = curScores[Player.P1], p2 = curScores[mode?.includes('PVE') ? Player.AI : Player.P2];
+               setWinner(p1 > p2 ? Player.P1 : (p2 > p1 ? (mode?.includes('PVE') ? Player.AI : Player.P2) : 'DRAW'));
+               return;
+            }
+
+            // Determine Next Player
+            let next = mover === Player.P1 ? (mode === GameMode.PVP_ONLINE || mode === GameMode.PVP_LOCAL ? Player.P2 : Player.AI) : Player.P1;
+            
+            // Handle Scatter (Dải dân) for the NEXT player
+            const scatterCheck = await checkAndHandleScatter(curBoard, curScores, next === Player.AI ? Player.P2 : next);
+            
+            if (scatterCheck.gameOver) {
+                 if (scatterCheck.loser) {
+                     // If lost due to running out of points to scatter
+                     setWinner(scatterCheck.loser === Player.P1 ? (mode?.includes('PVE') ? Player.AI : Player.P2) : Player.P1);
+                 } else {
+                     // Standard end game via Mandarins empty during scatter check
+                     const res = collectRemainingStones(curBoard);
+                     curScores[Player.P1] += res.p1Bonus; curScores[mode?.includes('PVE') ? Player.AI : Player.P2] += res.p2Bonus;
+                     setBoard([...res.board]); setScores(curScores);
+                     const p1 = curScores[Player.P1], p2 = curScores[mode?.includes('PVE') ? Player.AI : Player.P2];
+                     setWinner(p1 > p2 ? Player.P1 : (p2 > p1 ? (mode?.includes('PVE') ? Player.AI : Player.P2) : 'DRAW'));
+                 }
+                 return;
+            }
+            
+            // Update Board/Scores if scatter happened
+            if (scatterCheck.scattered) {
+                curBoard = scatterCheck.board;
+                curScores = scatterCheck.scores;
+            }
+
+            setTurnSafe(next); 
+          } finally {
+            setIsAnimating(false);
+          }
+        }, [boardRef, scoresRef, turnRef, mode, isAnimating, phase, conn, isHost]);
+        
+        // AI TRIGGER
+        useEffect(() => {
+            if (phase === GamePhase.PLAYING && turn === Player.AI && !isAnimating && !winner) {
+                const timer = setTimeout(() => {
+                    const move = getBestAIMove(board, mode);
+                    if (move) {
+                        executeMove(move.idx, move.dir);
+                    } else {
+                        // AI has no moves and failed checkEmptySide? Should not happen if checkEmptySide works.
+                        // But if it does, pass turn? No, scatter handles it.
+                    }
+                }, 1000); // 1s delay for "thinking"
+                return () => clearTimeout(timer);
+            }
+        }, [turn, phase, isAnimating, winner, board, mode, executeMove]);
+
+        const handleDataReceived = useCallback((msg, connection) => {
+            const currentIsHost = isHostRef.current;
+            switch (msg.type) {
+                case 'WELCOME': 
+                    setP1Profile(msg.payload.hostProfile); 
+                    setP2Profile(myProfile);               
+                    if (msg.payload.timeLimit !== undefined) { setTimeLimit(msg.payload.timeLimit); } 
+                    connection.send({ type: 'JOIN', payload: { guestProfile: myProfile } });
+                    break;
+                case 'JOIN':
+                    setP2Profile(msg.payload.guestProfile);
+                    connection.send({ type: 'START' });
+                    setPhase(GamePhase.RPS_GAME);
+                    break;
+                case 'START':
+                    setPhase(GamePhase.RPS_GAME);
+                    break;
+                case 'RPS_MOVE': 
+                    if (currentIsHost) setRpsP2Move(msg.payload); 
+                    else setRpsP1Move(msg.payload); 
+                    break;
+                case 'RPS_CONCLUSION':
+                     setRpsP1Move(msg.payload.p1Move);
+                     setRpsP2Move(msg.payload.p2Move);
+                     setRpsWinner(msg.payload.winner);
+                     setShowRpsResult(true);
+                     break;
+                case 'RPS_ROUND_RESET':
+                     setRpsP1Move(null);
+                     setRpsP2Move(null);
+                     setShowRpsResult(false);
+                     setRpsWinner(null);
+                     break;
+                case 'GAME_START_SYNC':
+                     setTurnSafe(msg.payload);
+                     setPhase(GamePhase.PLAYING);
+                     if (timeLimitRef.current > 0) setTimeLeft(timeLimitRef.current);
+                     else setTimeLeft(null);
+                     setShowRpsResult(false);
+                     break;
+                case 'GAME_MOVE': 
+                     executeMove(msg.payload.slotIndex, msg.payload.direction, true); 
+                     break;
+                case 'GAME_OVER_TIMEOUT': setWinner(msg.payload); setTimeLeft(0); break;
+                case 'RESET_REQ': setResetRequestStatus('RECEIVED'); break;
+                case 'RESET_ACK': msg.payload ? resetGameInternal() : setResetRequestStatus('NONE'); break;
+                case 'EXIT': setShowDisconnectModal(true); break;
+                case 'TIME_SYNC': setTimeLeft(msg.payload); break;
+            }
+        }, [myProfile, timeLimit, executeMove]);
+
+        useEffect(() => {
+            if (!conn) return;
+            const handler = (data) => handleDataReceived(data, conn);
+            conn.on('data', handler);
+            return () => { conn.off('data', handler); };
+        }, [conn, handleDataReceived]);
+
+        const initPeer = (retryCount = 0) => {
+            if (peerRef.current) peerRef.current.destroy();
+            const id = generateShortId();
+            const p = new Peer(id, { config: { iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' },
+                { urls: 'stun:stun.stunprotocol.org:3478' }
+            ] } });
+            
+            p.on('open', (id) => setPeerId(id));
+            p.on('connection', (c) => {
+                setConn(c);
+                c.on('open', () => { 
+                    setIsHost(true); 
+                    setTimeout(() => c.send({ type: 'WELCOME', payload: { hostProfile: myProfile, timeLimit } }), 500); 
+                });
+                c.on('close', () => { setShowDisconnectModal(true); });
+                c.on('error', () => { setShowDisconnectModal(true); });
+            });
+            p.on('error', (err) => {
+                if (err.type === 'unavailable-id' && retryCount < 5) initPeer(retryCount + 1);
+                else if (phase === GamePhase.CONNECTION) alert(`Network Error: ${err.type}`);
+            });
+            peerRef.current = p;
+        };
+
+        useEffect(() => { if (phase === GamePhase.CONNECTION) initPeer(); }, [phase]);
+
+        const connectToPeer = () => {
+            if (!peerRef.current || !targetPeerId || isConnecting) return;
+            setIsConnecting(true);
+            const cleanId = targetPeerId.trim().toUpperCase();
+            const c = peerRef.current.connect(cleanId, { reliable: true });
+            setConn(c);
+            const tm = setTimeout(() => { if (!c.open) { setIsConnecting(false); alert('Connection timed out. Check ID.'); c.close(); } }, 10000);
+            
+            c.on('open', () => { clearTimeout(tm); setIsConnecting(false); setIsHost(false); });
+            c.on('close', () => { setShowDisconnectModal(true); });
+            c.on('error', (e) => { clearTimeout(tm); setIsConnecting(false); alert('Failed to connect.'); });
+        };
+
+        const handleSlotClick = (index) => {
+            if (isAnimating || phase !== GamePhase.PLAYING) return;
+            const isP1Turn = turn === Player.P1;
+            const isMySlot = isP1Turn ? P1_SLOTS.includes(index) : P2_SLOTS.includes(index);
+
+            if (mode === GameMode.PVP_ONLINE) {
+                const amIP1 = isHost;
+                const myTurn = amIP1 ? Player.P1 : Player.P2;
+                if (turn !== myTurn) return; 
+            } else if (mode?.includes('PVE') && !isP1Turn) {
+                return;
+            }
+
+            if (isMySlot && board[index] > 0) {
+                if (selectedSlot === index) setSelectedSlot(null);
+                else setSelectedSlot(index);
+            }
+        };
+
+        const resetToMenu = () => { if (peerRef.current) peerRef.current.destroy(); setPhase(GamePhase.MENU); setMode(null); setBoard(INITIAL_BOARD); setConn(null); setShowExitConfirm(false); setShowDisconnectModal(false); setRpsP1Move(null); setRpsP2Move(null); setRpsWinner(null); setIsHost(false); setWinner(null); setTimeLimit(0); setIsConnecting(false); };
+        const resetGameInternal = () => { setBoard([...INITIAL_BOARD]); setScores({ [Player.P1]: 0, [Player.P2]: 0, [Player.AI]: 0 }); setWinner(null); setIsAnimating(false); setSelectedSlot(null); setActiveSowingSlot(null); setResetRequestStatus('NONE'); setRpsP1Move(null); setRpsP2Move(null); setRpsWinner(null); setShowRpsResult(false); setTimeLeft(timeLimit > 0 ? timeLimit : null); setPhase(GamePhase.RPS_GAME); };
+        
+        // RPS Logic
+        useEffect(() => {
+          const isAuthority = isHost || mode !== GameMode.PVP_ONLINE;
+          if (phase === GamePhase.RPS_GAME && rpsP1Move && rpsP2Move && !showRpsResult && isAuthority) {
+            const res = rpsP1Move === rpsP2Move ? 'DRAW' : ((rpsP1Move === 'ROCK' && rpsP2Move === 'SCISSORS') || (rpsP1Move === 'PAPER' && rpsP2Move === 'ROCK') || (rpsP1Move === 'SCISSORS' && rpsP2Move === 'PAPER') ? 'P1' : 'P2');
+            setRpsWinner(res);
+            setShowRpsResult(true);
+            if (mode === GameMode.PVP_ONLINE && isHost && conn) {
+                conn.send({ type: 'RPS_CONCLUSION', payload: { winner: res, p1Move: rpsP1Move, p2Move: rpsP2Move } });
+            }
+            if (res === 'DRAW') {
+                 setTimeout(() => {
+                    if (mode === GameMode.PVP_ONLINE && isHost && conn) conn.send({ type: 'RPS_ROUND_RESET' });
+                    setRpsP1Move(null); setRpsP2Move(null); setShowRpsResult(false); setRpsWinner(null);
+                 }, 2000);
+            } else {
+                setTimeout(() => {
+                    const firstTurn = res === 'P1' ? Player.P1 : (mode === GameMode.PVP_ONLINE ? Player.P2 : (mode?.includes('PVE') ? Player.AI : Player.P2));
+                    if (mode === GameMode.PVP_ONLINE && isHost && conn) conn.send({ type: 'GAME_START_SYNC', payload: firstTurn });
+                    setTurnSafe(firstTurn); setPhase(GamePhase.PLAYING); 
+                    if (timeLimit > 0) setTimeLeft(timeLimit); else setTimeLeft(null);
+                    setShowRpsResult(false);
+                }, 2000);
+            }
+          } else if (phase === GamePhase.RPS_GAME && mode?.includes('PVE') && rpsP1Move && !rpsP2Move) {
+              setTimeout(() => setRpsP2Move(['ROCK','PAPER','SCISSORS'][Math.floor(Math.random()*3)]), 1000);
+          }
+        }, [rpsP1Move, rpsP2Move, phase, showRpsResult, mode, isHost, conn, timeLimit]);
+
+        const getDisplayName = (pk) => pk === Player.P1 ? p1Profile.name : p2Profile.name;
+        const getWinnerText = () => { if (!winner) return ''; if (winner === 'DRAW') return 'DRAW!'; if (mode === GameMode.PVP_ONLINE) { const amIP1 = isHost; if (winner === Player.P1) return amIP1 ? 'You Won!' : 'You Lost!'; return amIP1 ? 'You Lost!' : 'You Won!'; } if (winner === Player.P1) return `${p1Profile.name} Wins!`; if (winner === Player.P2) return `${p2Profile.name} Wins!`; return 'AI Wins!'; };
+        const isP2View = mode === GameMode.PVP_ONLINE && !isHost;
+        const topProfile = isRotated ? p1Profile : p2Profile;
+        const botProfile = isRotated ? p2Profile : p1Profile;
+        const topScore = scores[isRotated ? Player.P1 : (mode?.includes('PVE') ? Player.AI : Player.P2)];
+        const botScore = scores[isRotated ? (mode?.includes('PVE') ? Player.AI : Player.P2) : Player.P1];
+        
+        const visualTopRow = isRotated ? [5, 4, 3, 2, 1] : [11, 10, 9, 8, 7];
+        const visualBotRow = isRotated ? [7, 8, 9, 10, 11] : [1, 2, 3, 4, 5];
+        const leftMandarinIdx = isRotated ? 6 : 0;
+        const rightMandarinIdx = isRotated ? 0 : 6;
+        
+        const isMyTurn = mode === GameMode.PVP_ONLINE ? (isHost ? turn === Player.P1 : turn === Player.P2) : true;
+        const turnText = mode === GameMode.PVP_ONLINE ? (isMyTurn ? "YOUR TURN" : "OPPONENT'S TURN") : (turn === Player.P1 ? `${p1Profile.name}'s Turn` : `${p2Profile.name}'s Turn`);
+
+        if (phase === GamePhase.MENU) return <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-stone-900 relative"><div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')]"></div><div className="z-10 bg-wood-light p-8 rounded-3xl shadow-2xl max-w-md w-full border-[6px] border-wood-dark text-center"><h1 className="text-5xl font-serif text-wood-dark mb-2">Ô Ăn Quan</h1><p className="text-wood-dark/70 mb-6 font-serif italic">Mandarin Square Master</p><GameBtn onClick={() => setPhase(GamePhase.PROFILE_SETUP)} size="lg" className="w-full">START GAME</GameBtn></div></div>;
+        if (phase === GamePhase.PROFILE_SETUP) return <div className="min-h-screen flex flex-col items-center justify-center bg-stone-900 p-4"><div className="bg-wood-light p-8 rounded-3xl shadow-2xl max-w-md w-full border-[6px] border-wood-dark relative"><button onClick={() => setPhase(GamePhase.MENU)} className="absolute top-4 left-4 p-2 bg-black/10 rounded-full"><ArrowLeft size={20}/></button><h2 className="text-3xl font-serif font-bold text-wood-dark mb-6 text-center">Your Profile</h2><div className="flex flex-col items-center gap-4 mb-6"><div className="relative group"><Avatar src={myProfile.avatar} size="lg" /><label className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition cursor-pointer text-white"><Upload size={20} /><input type="file" accept="image/*" className="hidden" onChange={(e)=>e.target.files[0] && new FileReader().readAsDataURL(e.target.files[0]) || ((r)=>{r.onload=(ev)=>setMyProfile({...myProfile,avatar:ev.target.result});r.readAsDataURL(e.target.files[0])})(new FileReader())} /></label></div><input type="text" value={myProfile.name} onChange={(e) => setMyProfile({...myProfile, name: e.target.value})} className="text-center text-xl font-bold bg-parchment border-2 border-wood rounded-lg px-4 py-2 w-full" placeholder="Enter Name"/></div><GameBtn onClick={() => setPhase(GamePhase.LOBBY)} className="w-full">CONTINUE <ArrowRight size={20} /></GameBtn></div></div>;
+        if (phase === GamePhase.LOBBY) return <div className="min-h-screen flex flex-col items-center justify-center bg-stone-900 p-4"><div className="bg-wood-light p-8 rounded-3xl shadow-2xl max-w-md w-full border-[6px] border-wood-dark relative"><button onClick={() => setPhase(GamePhase.PROFILE_SETUP)} className="absolute top-4 left-4 p-2 bg-black/10 rounded-full"><ArrowLeft size={20}/></button><h2 className="text-3xl font-serif font-bold text-wood-dark mb-4 text-center">Select Mode</h2><div className="mb-6 bg-white/50 p-3 rounded-xl flex items-center justify-between"><div className="flex items-center gap-2 font-bold text-wood-dark"><Clock size={18} /> Time Limit</div><div className="flex items-center gap-1 bg-white border border-wood/30 rounded px-2 py-1"><input type="number" min="0" max="99" value={Math.floor(timeLimit / 60)} onChange={(e) => { const m = parseInt(e.target.value) || 0; const s = timeLimit % 60; setTimeLimit(m * 60 + s); }} className="w-10 text-center font-bold text-lg outline-none" placeholder="00" /><span className="font-bold">:</span><input type="number" min="0" max="59" value={timeLimit % 60} onChange={(e) => { const s = Math.min(59, parseInt(e.target.value) || 0); const m = Math.floor(timeLimit / 60); setTimeLimit(m * 60 + s); }} className="w-10 text-center font-bold text-lg outline-none" placeholder="00" /></div></div><div className="space-y-4"><GameBtn onClick={() => { setMode(GameMode.PVP_ONLINE); setP1Profile(myProfile); setPhase(GamePhase.CONNECTION); }} color="blue" className="w-full"><Wifi size={24} /> Play Online</GameBtn><GameBtn onClick={() => { setMode(GameMode.PVP_LOCAL); setP1Profile(myProfile); setP2Profile({ name: 'Player 2', avatar: null }); setTimeLeft(timeLimit > 0 ? timeLimit : null); setPhase(GamePhase.RPS_GAME); }} className="w-full"><Users size={24} /> 2 Players</GameBtn><GameBtn onClick={() => { setMode(GameMode.PVE_HARD); setP1Profile(myProfile); setP2Profile({ name: 'Master AI', avatar: null }); setTimeLeft(timeLimit > 0 ? timeLimit : null); setPhase(GamePhase.RPS_GAME); }} color="red" className="w-full"><Monitor size={24} /> vs AI</GameBtn></div></div></div>;
+        if (phase === GamePhase.CONNECTION) return <div className="min-h-screen flex flex-col items-center justify-center bg-stone-900 p-4 text-center"><div className="bg-wood-light p-8 rounded-3xl shadow-2xl max-w-md w-full border-[6px] border-wood-dark"><h2 className="text-2xl font-bold text-wood-dark mb-4">Online Setup</h2><div className="mb-6 bg-white/50 p-4 rounded-lg"><div className="text-sm text-wood-dark font-bold mb-2">YOUR ROOM CODE</div><div className="flex items-center gap-2 mb-4"><div className="flex-1 bg-white p-2 rounded border border-wood/30 font-mono text-2xl font-bold tracking-widest text-center">{peerId || <Loader2 className="animate-spin mx-auto"/>}</div><button onClick={() => { navigator.clipboard.writeText(peerId); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="p-2 bg-wood text-white rounded hover:bg-wood-dark relative">{copied ? <Check size={20} /> : <Copy size={20}/>}</button></div><div className="flex items-center justify-center gap-2 text-wood-dark font-bold bg-white/50 p-2 rounded border border-wood/20"><Clock size={16} /> Time Limit: {timeLimit > 0 ? `${Math.floor(timeLimit/60)}:${(timeLimit%60).toString().padStart(2,'0')}` : 'None'}</div></div><div className="flex items-center gap-4 my-4"><div className="h-px bg-wood-dark/20 flex-1"></div><span className="text-wood-dark font-bold">OR JOIN</span><div className="h-px bg-wood-dark/20 flex-1"></div></div><div className="mb-6"><input type="text" placeholder="ENTER 6-DIGIT CODE" value={targetPeerId} onChange={e => setTargetPeerId(e.target.value.toUpperCase())} disabled={isConnecting} className="w-full p-3 rounded-lg border-2 border-wood mb-2 text-center font-mono text-xl uppercase tracking-widest disabled:opacity-50" maxLength={6} /><GameBtn onClick={connectToPeer} disabled={!targetPeerId || !peerId || isConnecting || targetPeerId.length < 6} color="blue" className="w-full">{isConnecting ? <><Loader2 className="animate-spin" /> CONNECTING...</> : 'CONNECT'}</GameBtn></div><button onClick={resetToMenu} className="text-wood-dark underline">Cancel</button></div></div>;
+
+        return (
+          <div className="min-h-screen flex flex-col items-center justify-center bg-[#1a1a1a] text-parchment relative overflow-hidden select-none">
+             <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-10 pointer-events-none"></div>
+             <div className="absolute top-0 w-full p-4 flex justify-between items-center z-40 pointer-events-none"><div className="pointer-events-auto flex gap-2"><GameBtn onClick={() => setShowExitConfirm(true)} size="sm" color="gray" className="rounded-full"><LogOut size={16} /> Exit</GameBtn><GameBtn onClick={() => mode === GameMode.PVP_ONLINE && conn ? (setResetRequestStatus('SENT'), conn.send({type:'RESET_REQ'})) : (winner ? resetGameInternal() : setResetRequestStatus('RECEIVED'))} size="sm" color="wood" className="rounded-full" disabled={phase !== GamePhase.PLAYING}><RotateCcw size={16} /> Reset</GameBtn></div>{phase === GamePhase.PLAYING && timeLimit > 0 && <div className="bg-black/80 text-white px-4 py-2 rounded-full font-mono text-xl font-bold border-2 border-wood/50 shadow-lg flex items-center gap-2"><Clock size={18} className="text-red-400" /> {Math.floor(timeLeft/60)}:{(timeLeft%60).toString().padStart(2,'0')}</div>}</div>
+             {phase === GamePhase.RPS_GAME && <div className="z-[110] w-full max-w-4xl flex flex-col items-center p-2"><h2 className="text-4xl text-wood-light font-serif font-bold mb-8 drop-shadow-lg text-center">Rock Paper Scissors</h2><div className="flex justify-between w-full gap-8 px-4"><div className="flex-1 bg-wood-light p-6 rounded-2xl border-4 border-wood-dark shadow-xl flex flex-col items-center"><Avatar src={p1Profile.avatar} size="lg" /><h3 className="text-xl font-bold text-wood-dark mb-4">{p1Profile.name} {mode === GameMode.PVP_ONLINE ? (isHost ? '(You)' : '(Host)') : '(You)'}</h3>{(mode === GameMode.PVP_LOCAL || mode?.includes('PVE') || (mode === GameMode.PVP_ONLINE && isHost)) ? (<div className="flex gap-2">{['ROCK','PAPER','SCISSORS'].map(m => <button key={m} onClick={() => { setRpsP1Move(m); if(mode === GameMode.PVP_ONLINE) conn.send({type:'RPS_MOVE', payload: m}); }} disabled={!!rpsP1Move && mode !== GameMode.PVP_LOCAL} className={`p-4 rounded-xl bg-parchment border-b-4 border-wood-dark hover:-translate-y-1 active:border-b-0 text-3xl ${rpsP1Move === m ? 'bg-yellow-200 ring-4' : ''} ${rpsP1Move && rpsP1Move !== m ? 'opacity-50' : ''}`}>{m==='ROCK'?'✊':m==='PAPER'?'✋':'✌️'}</button>)}</div>) : (<div className="h-20 flex items-center justify-center">{rpsP1Move ? <div className="text-green-600 text-4xl font-bold">✓</div> : <div className="animate-pulse text-wood-dark font-bold">Thinking...</div>}</div>)}</div><div className="flex items-center justify-center text-3xl font-serif text-white font-bold">VS</div><div className="flex-1 bg-wood-light p-6 rounded-2xl border-4 border-wood-dark shadow-xl flex flex-col items-center"><Avatar src={p2Profile.avatar} size="lg" /><h3 className="text-xl font-bold text-wood-dark mb-4">{p2Profile.name} {mode === GameMode.PVP_ONLINE ? (!isHost ? '(You)' : '(Guest)') : (mode.includes('PVE') ? '' : '(Player 2)')}</h3>{(mode === GameMode.PVP_LOCAL || (mode === GameMode.PVP_ONLINE && !isHost)) ? (<div className="flex gap-2">{['ROCK','PAPER','SCISSORS'].map(m => <button key={m} onClick={() => { setRpsP2Move(m); if(mode === GameMode.PVP_ONLINE) conn.send({type:'RPS_MOVE', payload: m}); }} disabled={!!rpsP2Move && mode !== GameMode.PVP_LOCAL} className={`p-4 rounded-xl bg-parchment border-b-4 border-wood-dark hover:-translate-y-1 active:border-b-0 text-3xl ${rpsP2Move === m ? 'bg-yellow-200 ring-4' : ''} ${rpsP2Move && rpsP2Move !== m ? 'opacity-50' : ''}`}>{m==='ROCK'?'✊':m==='PAPER'?'✋':'✌️'}</button>)}</div>) : (<div className="h-20 flex items-center justify-center">{rpsP2Move ? <div className="text-green-600 text-4xl font-bold">✓</div> : <div className="animate-pulse text-wood-dark font-bold">Thinking...</div>}</div>)}</div></div></div>}
+             {showRpsResult && <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in zoom-in duration-300"><div className="bg-wood-light p-10 rounded-3xl border-[8px] border-wood-dark text-center shadow-2xl"><div className="flex justify-center items-center gap-12 mb-8"><div className="text-center"><div className="text-6xl mb-2">{rpsP1Move==='ROCK'?'✊':rpsP1Move==='PAPER'?'✋':'✌️'}</div><div className="font-bold text-wood-dark">{p1Profile.name}</div></div><Swords size={32} className="text-wood-dark" /><div className="text-center"><div className="text-6xl mb-2">{rpsP2Move==='ROCK'?'✊':rpsP2Move==='PAPER'?'✋':'✌️'}</div><div className="font-bold text-wood-dark">{p2Profile.name}</div></div></div><h2 className="text-4xl font-black text-wood-dark uppercase mb-2">{rpsWinner==='DRAW'?'DRAW!':<div className="flex flex-col gap-1"><div className="text-green-700">{getDisplayName(rpsWinner==='P1'?Player.P1:Player.P2)} GOES FIRST</div></div>}</h2></div></div>}
+             {phase === GamePhase.PLAYING && (
+              <div className="flex-1 flex flex-col items-center justify-center w-full max-w-6xl mx-auto p-4 transition-opacity duration-1000" style={{ opacity: isAnimating ? 1 : 1 }}>
+                
+                {/* TURN INDICATOR */}
+                <div className="mb-4 text-center z-50">
+                     <div className={`inline-block px-8 py-2 rounded-full font-bold text-xl border-2 shadow-lg transition-all duration-300 flex items-center gap-2 ${!isMyTurn && mode===GameMode.PVP_ONLINE ? 'bg-gray-800 text-gray-400 border-gray-600' : (turn === Player.P1 ? 'bg-wood-dark text-parchment border-wood-light' : 'bg-wood-red text-parchment border-white/50')}`}>
+                        {turn === Player.AI && isAnimating && <Loader2 className="animate-spin" size={20}/>}
+                        {turnText} {isAnimating && " (Playing...)"}
+                     </div>
+                </div>
+
+                <div ref={boardContainerRef} className="relative bg-wood-light/90 p-8 rounded-[4rem] shadow-[0_20px_50px_rgba(0,0,0,0.5)] border-[8px] border-wood-dark" style={{ transform: `scale(${scale})`, transformOrigin: 'center' }}>
+                  {/* Score Board */}
+                  <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-12 bg-wood-dark text-parchment px-8 py-2 rounded-xl border-4 border-wood shadow-lg flex items-center gap-4 z-20">
+                    <div className={`flex items-center gap-2 ${turn === (isRotated ? Player.P1 : (mode?.includes('PVE')?Player.AI:Player.P2)) ? 'opacity-100 scale-110 text-yellow-400 font-black' : 'opacity-60'} transition-all`}><Avatar src={topProfile.avatar} size="sm" /><span className="font-bold">{topProfile.name}</span><span className="text-2xl font-bold bg-black/20 px-2 rounded">{topScore}</span></div>
+                    <div className="h-8 w-[2px] bg-wood/50"></div>
+                    <div className={`flex items-center gap-2 ${turn === (isRotated ? Player.P2 : Player.P1) ? 'opacity-100 scale-110 text-yellow-400 font-black' : 'opacity-60'} transition-all`}><span className="text-2xl font-bold bg-black/20 px-2 rounded">{botScore}</span><span className="font-bold">{botProfile.name}</span><Avatar src={botProfile.avatar} size="sm" /></div>
+                  </div>
+                  
+                  {/* Overlay for Not My Turn */}
+                  {mode === GameMode.PVP_ONLINE && !isMyTurn && (
+                      <div className="absolute inset-0 z-30 rounded-[3.5rem] bg-black/10 backdrop-blur-[1px] flex items-center justify-center pointer-events-none">
+                          <div className="bg-black/60 text-white px-6 py-3 rounded-full font-bold border border-white/20 shadow-xl flex items-center gap-2 animate-pulse">
+                              <Loader2 className="animate-spin" size={20}/> Waiting for opponent...
+                          </div>
+                      </div>
+                  )}
+
+                  <div className="flex gap-4 mb-4">
+                    {/* Left Mandarin */}
+                    <div className="w-32 h-64 border-4 border-wood-dark rounded-l-full bg-[#5d3a1a] relative overflow-hidden shadow-inner flex items-center justify-center group">{MANDARIN_SLOTS.includes(leftMandarinIdx) && <StoneCluster count={board[leftMandarinIdx]} isMandarin={true} />}<div className="absolute bottom-2 text-white/30 font-bold text-xl">{leftMandarinIdx}</div></div>
+                    
+                    <div className="flex flex-col gap-4">
+                      {/* Top Row (Opponent if standard, P1 if rotated) */}
+                      <div className="flex gap-4">
+                        {visualTopRow.map((idx) => (
+                          <div key={idx} onClick={() => handleSlotClick(idx)} className={`w-24 h-24 border-4 border-wood-dark rounded-2xl ${P1_SLOTS.includes(idx) ? 'bg-[#5d3a1a]' : 'bg-[#7a3b2b]'} relative shadow-inner flex items-center justify-center transition-all ${board[idx] > 0 && turn === (P1_SLOTS.includes(idx) ? Player.P1 : (mode?.includes('PVE')?Player.AI:Player.P2)) && !isAnimating ? 'hover:brightness-110 hover:scale-105 hover:shadow-xl cursor-pointer slot-active' : 'slot-disabled'}`}>
+                             <StoneCluster count={board[idx]} />
+                             {selectedSlot === idx && !isAnimating && <div className="absolute inset-0 bg-black/40 rounded-2xl z-20 flex items-center justify-center gap-1 animate-in fade-in duration-200 cursor-default" onClick={(e) => e.stopPropagation()}>
+                               {/* Fix direction logic: Top row visual Left is CW (1), Right is CCW (-1) */}
+                               <button onClick={(e) => { e.stopPropagation(); executeMove(idx, 1); }} className="p-2 bg-wood-dark text-parchment rounded-full hover:scale-110 transition shadow-lg border border-wood-light"><ArrowLeft size={20} /></button>
+                               <button onClick={(e) => { e.stopPropagation(); executeMove(idx, -1); }} className="p-2 bg-wood-dark text-parchment rounded-full hover:scale-110 transition shadow-lg border border-wood-light"><ArrowRight size={20} /></button>
+                             </div>}
+                             {activeSowingSlot === idx && <div className="absolute -top-12 z-20 animate-bounce"><Hand className="text-yellow-400 fill-yellow-400 drop-shadow-lg" size={40} /></div>}
+                             <div className="absolute top-1 right-2 text-white/30 font-bold text-xs">{idx}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Bottom Row (Me if standard, P2 if rotated) */}
+                      <div className="flex gap-4">
+                        {visualBotRow.map((idx) => (
+                          <div key={idx} onClick={() => handleSlotClick(idx)} className={`w-24 h-24 border-4 border-wood-dark rounded-2xl ${P1_SLOTS.includes(idx) ? 'bg-[#5d3a1a]' : 'bg-[#7a3b2b]'} relative shadow-inner flex items-center justify-center transition-all ${board[idx] > 0 && turn === (P1_SLOTS.includes(idx) ? Player.P1 : Player.P2) && !isAnimating ? 'hover:brightness-110 hover:scale-105 hover:shadow-xl cursor-pointer slot-active' : 'slot-disabled'}`}>
+                             <StoneCluster count={board[idx]} />
+                             {selectedSlot === idx && !isAnimating && <div className="absolute inset-0 bg-black/40 rounded-2xl z-20 flex items-center justify-center gap-1 animate-in fade-in duration-200 cursor-default" onClick={(e) => e.stopPropagation()}>
+                               {/* Fix direction logic: Bottom row visual Left is CCW (-1), Right is CW (1) */}
+                               <button onClick={(e) => { e.stopPropagation(); executeMove(idx, -1); }} className="p-2 bg-wood-dark text-parchment rounded-full hover:scale-110 transition shadow-lg border border-wood-light"><ArrowLeft size={20} /></button>
+                               <button onClick={(e) => { e.stopPropagation(); executeMove(idx, 1); }} className="p-2 bg-wood-dark text-parchment rounded-full hover:scale-110 transition shadow-lg border border-wood-light"><ArrowRight size={20} /></button>
+                             </div>}
+                             {activeSowingSlot === idx && <div className="absolute -bottom-12 z-20 animate-bounce"><Hand className="text-yellow-400 fill-yellow-400 drop-shadow-lg rotate-180" size={40} /></div>}
+                             <div className="absolute bottom-1 right-2 text-white/30 font-bold text-xs">{idx}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Right Mandarin */}
+                    <div className="w-32 h-64 border-4 border-wood-dark rounded-r-full bg-[#5d3a1a] relative overflow-hidden shadow-inner flex items-center justify-center group">{MANDARIN_SLOTS.includes(rightMandarinIdx) && <StoneCluster count={board[rightMandarinIdx]} isMandarin={true} />}<div className="absolute bottom-2 text-white/30 font-bold text-xl">{rightMandarinIdx}</div></div>
+                  </div>
+                </div>
+              </div>
+             )}
+             {showExitConfirm && <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"><div className="bg-wood-light p-6 rounded-2xl border-4 border-wood-dark max-w-sm w-full text-center"><AlertTriangle className="w-12 h-12 text-red-600 mx-auto mb-4" /><h3 className="text-2xl font-bold text-wood-dark mb-2">Leave Match?</h3><div className="flex gap-4 mt-6"><GameBtn onClick={() => setShowExitConfirm(false)} color="gray" className="flex-1" size="sm">Cancel</GameBtn><GameBtn onClick={()=>mode===GameMode.PVP_ONLINE&&conn?(conn.send({type:'EXIT'}),resetToMenu()):resetToMenu()} color="red" className="flex-1" size="sm">Leave</GameBtn></div></div></div>}
+             {showDisconnectModal && <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in zoom-in duration-300"><div className="bg-wood-light p-8 rounded-2xl border-[6px] border-wood-dark max-w-md w-full text-center shadow-2xl"><XCircle className="w-16 h-16 text-red-600 mx-auto mb-4" /><h3 className="text-3xl font-serif font-bold text-wood-dark mb-2">Disconnected</h3><p className="text-wood-dark/80 mb-8 text-lg">The connection to your opponent was lost.</p><GameBtn onClick={resetToMenu} color="wood" className="w-full">Return to Menu</GameBtn></div></div>}
+             {quanNonAlert && <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[130] animate-in fade-in slide-in-from-top-4 duration-300"><div className="bg-blue-600 text-white px-6 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 border-2 border-white/20"><ShieldAlert className="animate-bounce" />QUAN NON! Cannot Capture!</div></div>}
+             {scatterAlert && <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[130] animate-in fade-in slide-in-from-top-4 duration-300"><div className="bg-yellow-600 text-white px-6 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 border-2 border-white/20"><Coins className="animate-pulse" /> SCATTER! Paying 5 stones to continue.</div></div>}
+             {resetRequestStatus === 'RECEIVED' && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"><div className="bg-wood-light p-6 rounded-2xl border-4 border-wood-dark max-w-sm w-full text-center"><RotateCcw className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin-slow" /><h3 className="text-2xl font-bold text-wood-dark mb-2">Restart?</h3><p className="text-wood-dark/70 mb-6">{p2Profile.name} wants to restart.</p><div className="flex gap-4"><GameBtn onClick={()=>{if(mode===GameMode.PVP_ONLINE&&conn)conn.send({type:'RESET_ACK',payload:false});setResetRequestStatus('NONE')}} color="gray" className="flex-1" size="sm">No</GameBtn><GameBtn onClick={()=>{if(mode===GameMode.PVP_ONLINE&&conn)conn.send({type:'RESET_ACK',payload:true});resetGameInternal()}} color="blue" className="flex-1" size="sm">Yes</GameBtn></div></div></div>}
+             {resetRequestStatus === 'SENT' && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"><div className="bg-wood-light p-6 rounded-2xl border-4 border-wood-dark max-w-sm w-full text-center"><Loader2 className="w-12 h-12 text-wood-dark mx-auto mb-4 animate-spin" /><h3 className="text-xl font-bold text-wood-dark mb-2">Waiting...</h3></div></div>}
+             {winner && <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-500"><div className="bg-parchment p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center border-4 border-wood relative"><Trophy className="w-24 h-24 text-yellow-500 mx-auto mb-4 drop-shadow-md animate-bounce" /><h2 className="text-3xl md:text-4xl font-bold text-wood-dark mb-2 font-serif">{getWinnerText()}</h2><div className="flex justify-center gap-8 my-6 text-xl"><div className="text-center"><div className="text-xs uppercase text-gray-500">{p1Profile.name}</div><div className={`font-bold text-3xl ${getWinnerText()==='You Won!'?'text-jade':'text-gray-600'}`}>{scores[Player.P1]}</div></div><div className="text-gray-400 font-light text-3xl">-</div><div className="text-center"><div className="text-xs uppercase text-gray-500">{p2Profile.name}</div><div className={`font-bold text-3xl ${!getWinnerText().includes('You')?'text-red-600':'text-gray-600'}`}>{scores[Player.P2]}</div></div></div><div className="flex flex-col gap-3"><button onClick={() => { if(mode===GameMode.PVP_ONLINE&&conn) { setResetRequestStatus('SENT'); conn.send({type:'RESET_REQ'}); } else resetGameInternal(); }} className="w-full py-3 rounded-lg bg-wood text-white font-bold hover:bg-wood-dark flex items-center justify-center gap-2 shadow-lg hover:scale-105 transition"><RotateCcw size={20}/> Play Again</button><button onClick={resetToMenu} className="w-full py-3 rounded-lg bg-wood-light/50 text-wood-dark font-bold hover:bg-wood-light flex items-center justify-center gap-2 hover:scale-105 transition">Menu</button></div></div></div>}
+          </div>
+        );
+      }
+      createRoot(document.getElementById('root')).render(<App />);
+    </script>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
